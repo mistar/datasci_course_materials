@@ -1,0 +1,204 @@
+---
+title: Summer months in San Francisco brings more cocaine related incidents, but not
+  over the weekend
+author: "mistar"
+date: "5 November 2016"
+subtitle: San Francisco and Seattle
+html_notebook: default
+toc: yes
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r readSF, include=FALSE}
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(purrr)
+sf <- read.csv("~/Git/datasci_course_materials/assignment6/sanfrancisco_incidents_summer_2014.csv", stringsAsFactors=FALSE)
+
+cols <- c("Category", "DayOfWeek", "PdDistrict", "Resolution", "Descript")
+sf[cols] <- purrr::map_df(sf[cols], as.factor)
+
+sf$DateTmp <- sf$Date 
+sf <- tidyr::separate(sf, DateTmp, c("Month", "Day", "Year"))
+sf <- tidyr::separate(sf, Time, c("Hour", "Minute"))
+cols <- c("Year", "Month", "Day", "Hour", "Minute")
+sf[cols] <- purrr::map_df(sf[cols], as.integer)
+
+sf$Month[sf$Month == 6] <- "Jun"
+sf$Month[sf$Month == 7] <- "Jul"
+sf$Month[sf$Month == 8] <- "Aug"
+sf$Month <- factor(sf$Month, levels = c("Jun", "Jul", "Aug"))
+
+cols <- stringr::str_detect(names(sf), "Date")
+sf[cols] <- purrr::map_df(sf[cols], as.Date, format = "%m/%d/%Y")
+
+sf <- dplyr::rename(sf, Longitude = X, Latitude = Y, Offense_Type = Descript)
+
+names(sf) <- tolower(names(sf))
+
+sf <- dplyr::select(sf,-year, -incidntnum, -minute, - address, -location, -pdid)
+
+mutate_cond <- function(.data, condition, ..., new_init = NA, envir = parent.frame()) {
+    # Initialize any new variables as new_init
+    new_vars <- substitute(list(...))[-1]
+    new_vars %<>% sapply(deparse) %>% names %>% setdiff(names(.data))
+    .data[, new_vars] <- new_init
+    
+    condition <- eval(substitute(condition), .data, envir)
+    .data[condition, ] <- .data %>% filter(condition) %>% mutate(...)
+    .data
+}
+
+sf <- sf %>% mutate_cond(str_detect(offense_type, "COCAINE"), drug = "cocaine")
+sf <- sf %>% mutate_cond(str_detect(offense_type, "METH"), drug = "meth")
+sf <- sf %>% mutate_cond(str_detect(offense_type, "MARIJUANA"), drug = "marijuana")
+sf <- sf %>% mutate_cond(str_detect(offense_type, "HEROIN"), drug = "heroin")
+sf <- sf %>% mutate_cond(is.na(drug), drug = "unknown")
+sf$drug <- as.factor(sf$drug)
+
+
+sf$dayofweek <- factor(sf$dayofweek, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+sf <- sf %>% mutate_cond(str_detect(dayofweek, "Friday"), day_type = "weekend")
+sf <- sf %>% mutate_cond(str_detect(dayofweek, "Saturday"), day_type = "weekend")
+sf <- sf %>% mutate_cond(str_detect(dayofweek, "Sunday"), day_type = "weekend")
+sf <- sf %>% mutate_cond(is.na(day_type), day_type = "week")
+
+sf$day_type <- as.factor(sf$day_type)
+
+sf <- filter(sf, str_detect(category, "DRUG"))
+
+sf <- sf %>% mutate_cond(str_detect(offense_type, "SALE OF"), offense = "sale")
+sf <- sf %>% mutate_cond(str_detect(offense_type, "FOR SALE"), offense = "for_sale")
+sf <- sf %>% mutate_cond(str_detect(offense_type, "TRANSPORT"), offense = "for_sale")
+sf <- sf %>% mutate_cond(is.na(offense), offense = "possesion")
+sf$offense <- as.factor(sf$offense)
+```
+
+## Introduction
+
+This blog investigates and compares drug related offenses that have happen in the summer months in San Francisco. It is based on the real crime data from Summer 2014. These reduced datasets are available on the course github repository [github repository](https://github.com/uwescience/datasci_course_materials/tree/master/assignment6).
+
+As it could be expected, during the summer months, number of the drug offenses decreased for most of the types of drugs. This decrease follows more or less same pattern in the weekend and during the week. The only exception can be seen with the cocaine  and ???unknown??? drugs traffic. Overall number of cocaine related offenses increased in July. The odd thing is that in the same month there were almost no cocaine sales offenses over the weekend.  This is might be caused by the lowered cocaine sales effort in the Jun and July. 
+
+## Summer months in San Francisco 
+
+Looking at the all registered drug offenses in the summer months in San Francisco it becomes clear that the number of the offenses is low in Jun and July and it is increasing in August. The only exception to this rule are cocaine related offenses, where the offenses in July have reached the peak by uitnumbering same type of offenses made in Jun and August.
+
+```{r allPerMonth, echo=FALSE, message=FALSE, warning=FALSE,error=FALSE}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggmap)
+library(gridExtra)
+library(ggplot2)
+
+sf <- within(sf, drug <- factor(drug, levels=names(sort(table(drug), decreasing=TRUE))))
+ggplot(sf, aes(x = drug)) + geom_bar()  + coord_flip() + facet_grid(. ~ month) +
+    ggtitle("Overall drug related offenses in summer") +
+    ylab("Number of offenses") +
+    xlab("") 
+```
+
+Notice, that next to the cocaine the consumption of "unknown" drugs have also risen during July and August.
+
+## Odd cocaine offense incidents pattern
+
+The plot underneath clearly shows that most of the cocaine offenses are taking place in the Tenderloin district. 
+
+```{r allPerDistrict, echo=FALSE, message=FALSE, warning=FALSE,error=FALSE}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggmap)
+library(gridExtra)
+library(ggplot2)
+
+sfc <- filter(sf, drug == "cocaine")
+
+sfc <- within(sfc, pddistrict <- factor(pddistrict, levels=names(sort(table(pddistrict), decreasing=TRUE))))
+ggplot(sfc, aes(x = pddistrict, fill = day_type)) + geom_bar()  + coord_flip()  + facet_grid(. ~ month) +
+    ggtitle("Cocaine drug offenses per district")+
+    ylab("Number of offenses") +
+    xlab("") +
+    scale_fill_discrete(name="Days of the week",
+                        labels = c("Monday to Thursday", "Friday to Sunday"))
+
+```
+
+It is exactly in that district that we see huge increase of offenses in July. By dividing the days in the weekend (Friday though Sunday) and the other days, it becomes clear that most of the cocaine offenses, especially in July, take place during the week. 
+
+If you are not familiar with the San Francisco's districts, have a look at the triplet  plots underneath to see how this corresponds to the districts. 
+
+```{r, warning = FALSE}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggmap)
+library(gridExtra)
+library(ggplot2)
+ggmap::get_map(location = "San Francisco", zoom = 14) %>%
+    ggmap::ggmap() +
+    ggplot2::geom_point(data = sfc, aes(x = longitude, y = latitude, col = factor(day_type, labels = c("Monday to Thursday", "Friday to Sunday")))) +
+    ggtitle("Cocain drug offenses during the summer months of 2014") +
+    facet_grid(. ~ month) +
+    ylab("") +
+    xlab("") +
+    guides(color = guide_legend("Days of the week")) +
+    theme(
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank()
+    )
+
+```
+
+## Types of offenses
+
+Let's group the offence types to three simple categories: "Possession of the cocaine", 
+"Caught with cocaine meant for sale" and "Actually selling the cocaine" and see if there are patterns to be discovered there.
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggmap)
+library(gridExtra)
+library(ggplot2)
+off <- c(`possesion` = "Possession",
+         `for_sale` = "For Sale",
+         `sale` = "Sale")
+
+sfc %>% 
+    group_by(offense, date) %>%
+    mutate(count = n()) %>%
+    ggplot(aes(x = date, y = count, col = factor(day_type, labels = c("Monday to Thursday", "Friday to Sunday")))) +
+    geom_line(size=2, alpha=0.6) + 
+    facet_grid( offense ~ ., labeller = as_labeller(off)) +
+    ggtitle("Cocaine possesion and sale") +
+    xlab("") +
+    ylab("Number of offenses") +
+    guides(color = guide_legend("Days of the week")) +
+    scale_fill_discrete(name="Days of the week",
+                        breaks=c("week", "weekend"),
+                        labels = c("Monday to Thursday", "Friday to Sunday"))
+
+```
+
+As the three diagrams stacked on top of each other show, the three categories follow different patterns. 
+
+In June, there were only few incidents with those who possessed the cocaine. The number of this kind of offenses highly increased in July, but only outside of the weekend. Finally, in the August, the possession of the drugs on the streets of San Francisco increases in the weekend as well as during the week.
+
+Over all summer months the incidents where the cocaine was discovered that was meant for sale, show rather stable patter.
+
+The incidents where someone selling the cocaine was caught sharply droped at the beginning of July. There was one sales peak in the weekend in July, but it is only end of August when the first raise of the cocaine selling is visible again.
+
+## Conclusion
+
+During the summer months in San Francisco, the overall consumption of the known drugs dropped, while the consumption of the cocaine and "unknown" drugs have risen. In June we see that the offenses related to the sale of the cocaine is high, but the possession is low. In July, possibly as consequence of the situation in June, the sale drops. However, the incidents of consumption of cocaine and "unknown" drugs are rising. This remarkable situation is especially noticeable during the week, while the weekends are rather quiet. The trend goes on till last third of August, when the number of incidents related to the sales of cocaine are rising again. 
+
+** Please note that the code is downloadable via the button "Code" in the top right corner.
